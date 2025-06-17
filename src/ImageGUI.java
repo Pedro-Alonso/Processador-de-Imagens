@@ -11,6 +11,7 @@ public class ImageGUI extends JFrame {
     private JComboBox<String> filterSelector;
     private BufferedImage originalImage;
     private BufferedImage processedImage;
+    private double[][] currentDCTMatrix;
 
     public ImageGUI() {
         setTitle("Processador de Imagem");
@@ -23,6 +24,8 @@ public class ImageGUI extends JFrame {
         JButton loadButton = new JButton("Carregar Imagem");
         JButton processButton = new JButton("Aplicar Filtro");
         JButton saveButton = new JButton("Salvar Imagem Processada");
+        JButton useProcessedAsOriginalButton = new JButton("Usar Processada como Original"); 
+        
         filterSelector = new JComboBox<>(new String[] {
             "Inverter Cores",
             "Equalizar Histograma",
@@ -33,13 +36,24 @@ public class ImageGUI extends JFrame {
             "Limiarização",
             "Laplaciano",
             "Sobel",
-            "Compressão Dinâmica"
+            "Compressão Dinâmica",
+            "Pseudo-Cor",
+            "Otsu Binarização",
+            "Otsu Limiarização",
+            "Skeletonização (Zhang-Suen)",
+            "Equalização HSL",
+            "DCT",
+            "IDCT",
+            "Filtro Máximo",
+            "Filtro Mínimo",
+            "Filtro Ponto Médio"
         });
 
         topPanel.add(loadButton);
         topPanel.add(filterSelector);
         topPanel.add(processButton);
         topPanel.add(saveButton);
+        topPanel.add(useProcessedAsOriginalButton); // Adiciona o novo botão
 
         add(topPanel, BorderLayout.NORTH);
 
@@ -62,7 +76,10 @@ public class ImageGUI extends JFrame {
                     originalImage = ImageIO.read(selectedFile);
                     if (originalImage != null) {
                         originalLabel.setIcon(new ImageIcon(originalImage.getScaledInstance(350, -1, java.awt.Image.SCALE_SMOOTH)));
+                        processedLabel.setIcon(null); // Limpa a imagem processada ao carregar uma nova
+                        processedImage = null; // Zera a imagem processada
                     }
+                    currentDCTMatrix = null; // Reset DCT matrix on new image load
                 } catch (Exception ex) {
                     JOptionPane.showMessageDialog(this, "Erro ao carregar imagem: " + ex.getMessage());
                 }
@@ -164,14 +181,92 @@ public class ImageGUI extends JFrame {
                     } else {
                         return;  // Cancelado
                     }
-                }
-                      
+                } else if ("Pseudo-Cor".equals(selectedFilter)) {
+                    PseudoColor handler = new PseudoColor();
+                    processedImage = handler.applyPseudoColor(originalImage);
+                } else if ("Otsu Binarização".equals(selectedFilter)) {
+                    OtsuThreshold handler = new OtsuThreshold();
+                    processedImage = handler.binarize(originalImage);
+                } else if ("Otsu Limiarização".equals(selectedFilter)) {
+                    OtsuThreshold handler = new OtsuThreshold();
+                    processedImage = handler.limiarize(originalImage);
+                } else if ("Skeletonização (Zhang-Suen)".equals(selectedFilter)) {
+                    ZhangSuenSkeletonizer handler = new ZhangSuenSkeletonizer();
+                    processedImage = handler.skeletonize(originalImage);
+                } else if ("Equalização HSL".equals(selectedFilter)) {
+                    HSLUtils handler = new HSLUtils();
+                    processedImage = handler.equalizeHslLuminance(originalImage);
+                } else if ("DCT".equals(selectedFilter)) {
+                    DCTUtils handler = new DCTUtils();
+                    currentDCTMatrix = handler.dct2D(originalImage);
+                    int N = currentDCTMatrix.length;
+                    BufferedImage dctImage = new BufferedImage(N, N, BufferedImage.TYPE_INT_RGB);
+                    double min = Double.MAX_VALUE, max = -Double.MAX_VALUE;
+                    for (int i = 0; i < N; i++)
+                        for (int j = 0; j < N; j++) {
+                            if (currentDCTMatrix[i][j] < min) min = currentDCTMatrix[i][j];
+                            if (currentDCTMatrix[i][j] > max) max = currentDCTMatrix[i][j];
+                        }
+                    if (max == min) {
+                        max = min + 1; 
+                    }
+                    for (int i = 0; i < N; i++)
+                        for (int j = 0; j < N; j++) {
+                            int val = (int) ((currentDCTMatrix[i][j] - min) / (max - min) * 255);
+                            val = Math.max(0, Math.min(255, val));
+                            int rgb = (val << 16) | (val << 8) | val;
+                            dctImage.setRGB(i, j, rgb);
+                        }
+                    processedImage = dctImage;
+                } else if ("IDCT".equals(selectedFilter)) {
+                    if (currentDCTMatrix == null) {
+                        JOptionPane.showMessageDialog(this, "Execute DCT primeiro para obter os coeficientes.");
+                        return;
+                    }
+                    DCTUtils handler = new DCTUtils();
+                    processedImage = handler.idct2D(currentDCTMatrix);
+                } else if ("Filtro Máximo".equals(selectedFilter)) {
+                    MaxFilter handler = new MaxFilter();
+                    int[][][] matrix = handler.applyMaxFilter(originalImage);
+                    processedImage = handler.buildImageFromRGBMatrix(matrix);
+                } else if ("Filtro Mínimo".equals(selectedFilter)) {
+                    MinFilter handler = new MinFilter();
+                    int[][][] matrix = handler.applyMinFilter(originalImage);
+                    processedImage = handler.buildImageFromRGBMatrix(matrix);
+                } else if ("Filtro Ponto Médio".equals(selectedFilter)) {
+                    MidpointFilter handler = new MidpointFilter();
+                    int[][][] matrix = handler.applyMidpointFilter(originalImage);
+                    processedImage = handler.buildImageFromRGBMatrix(matrix);
+                }          
 
                 processedLabel.setIcon(new ImageIcon(processedImage.getScaledInstance(350, -1, java.awt.Image.SCALE_SMOOTH)));
             } catch (Exception ex) {
                 JOptionPane.showMessageDialog(this, "Erro ao processar imagem: " + ex.getMessage());
+                ex.printStackTrace(); 
             }
         });
+
+        useProcessedAsOriginalButton.addActionListener(e -> {
+            if (processedImage == null) {
+                JOptionPane.showMessageDialog(this, "Não há imagem processada para usar como original.");
+                return;
+            }
+            originalImage = new BufferedImage(processedImage.getWidth(), processedImage.getHeight(), processedImage.getType());
+            Graphics2D g = originalImage.createGraphics();
+            g.drawImage(processedImage, 0, 0, null);
+            g.dispose();
+
+            originalLabel.setIcon(new ImageIcon(originalImage.getScaledInstance(350, -1, java.awt.Image.SCALE_SMOOTH)));
+            
+            processedLabel.setIcon(null);
+            processedImage = null;
+            
+            DCTUtils handler = new DCTUtils();
+            currentDCTMatrix = handler.dct2D(originalImage); 
+
+            JOptionPane.showMessageDialog(this, "Imagem processada movida para o painel de Imagem Original.");
+        });
+
 
         saveButton.addActionListener(e -> {
             if (processedImage == null) {
